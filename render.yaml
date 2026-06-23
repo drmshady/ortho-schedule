@@ -2,6 +2,8 @@ services:
   - type: web
     name: clinic-backend
     runtime: python
+    plan: free
+    region: virginia
     rootDir: backend
     buildCommand: pip install .
     startCommand: alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port $PORT
