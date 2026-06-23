@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend
+        working-directory: backend
+        run: python -m pip install -e ".[dev]"
+      - name: Lint backend
+        working-directory: backend
+        run: ruff check .
+      - name: Type-check backend
+        working-directory: backend
+        run: mypy
+      - name: Audit backend dependencies
+        working-directory: backend
+        run: pip-audit .
+      - name: Test backend
+        working-directory: backend
+        run: pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+      - name: Generate API client
+        working-directory: frontend
+        run: npm run gen:api
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=moderate
+      - name: Test frontend
+        working-directory: frontend
+        run: npm test
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: npm init -y && npm install -D @playwright/test && npx playwright install --with-deps
+      - name: Run e2e suite
+        run: npx playwright test e2e

@@ -1,0 +1,516 @@
+openapi: 3.1.0
+info:
+  title: Clinic Patient Scheduling API
+  version: 0.1.0
+  description: >
+    Tenant-scoped REST API for clinic patient scheduling. Authentication is via a
+    server-side session cookie that carries the user's center scope. Every non-super-admin
+    endpoint is scoped to the caller's center and fails closed (403, no data) if scope
+    cannot be established (Constitution Principle II). All times are UTC (RFC 3339).
+servers:
+  - url: /api/v1
+
+tags:
+  - name: auth
+  - name: centers       # super-admin
+  - name: users         # center-admin staff management
+  - name: patients
+  - name: availability
+  - name: requests      # doctor -> reception handoff
+  - name: appointments
+  - name: notifications
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+  parameters:
+    date:
+      name: date
+      in: query
+      schema: { type: string, format: date }
+    doctorId:
+      name: doctor_id
+      in: query
+      schema: { type: string, format: uuid }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: double_booking }
+        message: { type: string }
+    Role:
+      type: string
+      enum: [super_admin, center_admin, doctor, reception]
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    Session:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/Role' }
+        center_id: { type: string, format: uuid, nullable: true }
+        must_change_password: { type: boolean }
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string }
+        new_password: { type: string, minLength: 12 }
+    Center:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        timezone: { type: string, example: Asia/Riyadh }
+        grid_minutes: { type: integer, default: 15 }
+        status: { type: string, enum: [active, suspended] }
+    CenterCreate:
+      type: object
+      required: [name, admin_email, admin_temp_password]
+      properties:
+        name: { type: string }
+        timezone: { type: string, default: Asia/Riyadh, example: Asia/Riyadh }
+        grid_minutes: { type: integer, default: 15 }
+        admin_email: { type: string, format: email }
+        admin_temp_password: { type: string }
+        admin_role: { type: string, enum: [center_admin, doctor, reception], default: center_admin }
+    CenterUpdate:
+      type: object
+      required: [timezone]
+      properties:
+        timezone: { type: string, example: Asia/Riyadh }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/Role' }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        is_active: { type: boolean }
+        is_admin: { type: boolean }
+        must_change_password: { type: boolean }
+    UserCreate:
+      type: object
+      required: [role, email, display_name, temp_password]
+      properties:
+        role: { type: string, enum: [doctor, reception] }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        temp_password: { type: string }
+        specialty: { type: string, nullable: true }
+    Patient:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        clinic_identifier: { type: string }
+        phone: { type: string, nullable: true }
+        date_of_birth: { type: string, format: date, nullable: true }
+        notes: { type: string, nullable: true }
+    PatientCreate:
+      type: object
+      required: [full_name]
+      properties:
+        full_name: { type: string }
+        clinic_identifier: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        date_of_birth: { type: string, format: date, nullable: true }
+        notes: { type: string, nullable: true }
+        confirm_possible_duplicate: { type: boolean, default: false }
+    DuplicateWarning:
+      type: object
+      properties:
+        code: { type: string, enum: [possible_duplicate] }
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/Patient' }
+    AvailabilityTemplate:
+      type: object
+      required: [doctor_id, weekday, start_local, end_local]
+      properties:
+        id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        clinic_id: { type: string, format: uuid, nullable: true }
+        weekday: { type: integer, minimum: 0, maximum: 6 }
+        start_local: { type: string, example: "09:00" }
+        end_local: { type: string, example: "13:00" }
+    AvailabilityException:
+      type: object
+      required: [doctor_id, date, kind]
+      properties:
+        id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        clinic_id: { type: string, format: uuid, nullable: true }
+        date: { type: string, format: date }
+        kind: { type: string, enum: [block, override, extra] }
+        start_local: { type: string, nullable: true }
+        end_local: { type: string, nullable: true }
+        reason: { type: string, nullable: true }
+    BookableInterval:
+      type: object
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+    AppointmentRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        reason: { type: string, nullable: true }
+        preferred_from: { type: string, format: date, nullable: true }
+        preferred_to: { type: string, format: date, nullable: true }
+        urgency: { type: string, enum: [routine, soon, urgent] }
+        expected_duration_minutes: { type: integer }
+        notes: { type: string, nullable: true }
+        status: { type: string, enum: [pending, fulfilled, declined] }
+        decline_reason: { type: string, nullable: true }
+        is_overdue: { type: boolean }
+        resulting_appointment_id: { type: string, format: uuid, nullable: true }
+    AppointmentRequestCreate:
+      type: object
+      required: [patient_id, urgency, expected_duration_minutes]
+      properties:
+        patient_id: { type: string, format: uuid }
+        reason: { type: string, nullable: true }
+        preferred_from: { type: string, format: date, nullable: true }
+        preferred_to: { type: string, format: date, nullable: true }
+        urgency: { type: string, enum: [routine, soon, urgent] }
+        expected_duration_minutes: { type: integer }
+        notes: { type: string, nullable: true }
+    RequestDecline:
+      type: object
+      required: [decline_reason]
+      properties:
+        decline_reason: { type: string }
+    Appointment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        doctor_id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        clinic_id: { type: string, format: uuid, nullable: true }
+        starts_at: { type: string, format: date-time }
+        duration_minutes: { type: integer }
+        status: { type: string, enum: [scheduled, completed, cancelled, no_show] }
+        origin: { type: string, enum: [request, direct] }
+        source_request_id: { type: string, format: uuid, nullable: true }
+    AppointmentCreate:
+      type: object
+      description: >-
+        Provide either patient_id (existing patient) or patient_name +
+        patient_clinic_identifier (a walk-in, resolved/created on the fly).
+      required: [doctor_id, starts_at, duration_minutes]
+      properties:
+        doctor_id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid, nullable: true }
+        patient_name: { type: string, nullable: true }
+        patient_clinic_identifier: { type: string, nullable: true }
+        clinic_id: { type: string, format: uuid, nullable: true }
+        starts_at: { type: string, format: date-time }
+        duration_minutes: { type: integer }
+        source_request_id: { type: string, format: uuid, nullable: true }
+        confirm_patient_conflict: { type: boolean, default: false }
+    Clinic:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        is_active: { type: boolean }
+    ClinicCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+    ClinicUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80, nullable: true }
+        is_active: { type: boolean, nullable: true }
+    AppointmentReschedule:
+      type: object
+      required: [starts_at, duration_minutes]
+      properties:
+        starts_at: { type: string, format: date-time }
+        duration_minutes: { type: integer }
+        confirm_patient_conflict: { type: boolean, default: false }
+    AppointmentStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [completed, cancelled, no_show] }
+        cancel_reason: { type: string, nullable: true }
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        payload: { type: object }
+        is_read: { type: boolean }
+        created_at: { type: string, format: date-time }
+  responses:
+    Forbidden:
+      description: Not permitted / out of center scope (default-deny)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: Integrity conflict (e.g., double_booking, slot_taken, invalid_transition)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unprocessable:
+      description: Validation error (e.g., outside_availability, off_grid, patient_conflict)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+security:
+  - sessionCookie: []
+
+paths:
+  # ---- auth ----
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Log in; establishes a center-scoped session cookie
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } }
+      responses:
+        '200': { description: Logged in, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '401': { description: Invalid credentials }
+        '403': { description: Account inactive or center suspended }
+  /auth/logout:
+    post: { tags: [auth], summary: Log out, responses: { '204': { description: Logged out } } }
+  /auth/session:
+    get:
+      tags: [auth]
+      summary: Current session
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '401': { description: No session }
+  /auth/change-password:
+    post:
+      tags: [auth]
+      summary: Change password (also clears must_change_password on first login)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ChangePasswordRequest' } } }
+      responses:
+        '204': { description: Changed }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  # ---- centers (super-admin only) ----
+  /centers:
+    get:
+      tags: [centers]
+      summary: List all centers (super-admin)
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Center' } } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+    post:
+      tags: [centers]
+      summary: Create a center and its first admin (super-admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CenterCreate' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Center' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /centers/{centerId}:
+    put:
+      tags: [centers]
+      summary: Update a center's time zone (super-admin)
+      parameters: [ { name: centerId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CenterUpdate' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Center' } } } }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { description: Not found }, '422': { $ref: '#/components/responses/Unprocessable' } }
+  /centers/{centerId}/status:
+    put:
+      tags: [centers]
+      summary: Suspend or reactivate a center (super-admin)
+      parameters: [ { name: centerId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [active, suspended] } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Center' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+
+  # ---- clinics (working units; managed by center-admin) ----
+  /clinics:
+    get:
+      tags: [clinics]
+      summary: List clinics (working units) in caller's center
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Clinic' } } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+    post:
+      tags: [clinics]
+      summary: Add a clinic (center-admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ClinicCreate' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Clinic' } } } }, '403': { $ref: '#/components/responses/Forbidden' }, '409': { $ref: '#/components/responses/Conflict' } }
+  /clinics/{clinicId}:
+    put:
+      tags: [clinics]
+      summary: Rename or activate/deactivate a clinic (center-admin)
+      parameters: [ { name: clinicId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ClinicUpdate' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Clinic' } } } }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { description: Not found }, '409': { $ref: '#/components/responses/Conflict' } }
+    delete:
+      tags: [clinics]
+      summary: Remove a clinic (center-admin); 409 if it has appointments
+      parameters: [ { name: clinicId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      responses: { '204': { description: Deleted }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { description: Not found }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ---- users (center-admin) ----
+  /users:
+    get:
+      tags: [users]
+      summary: List staff in caller's center (center-admin)
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+    post:
+      tags: [users]
+      summary: Create a doctor or reception account in caller's center (center-admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UserCreate' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /users/{userId}:
+    put:
+      tags: [users]
+      summary: Edit a staff account (center-admin)
+      parameters: [ { name: userId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { display_name: { type: string }, is_active: { type: boolean }, is_admin: { type: boolean } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /doctors:
+    get:
+      tags: [users]
+      summary: List doctors in caller's center (reception/admin) for booking
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } } }
+
+  # ---- patients ----
+  /patients:
+    get:
+      tags: [patients]
+      summary: Search patients by name or phone within caller's center
+      parameters: [ { name: q, in: query, schema: { type: string } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Patient' } } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+    post:
+      tags: [patients]
+      summary: Register a patient (warns on possible duplicate unless confirmed)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PatientCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Patient' } } } }
+        '409': { description: Possible duplicate (resubmit with confirm_possible_duplicate), content: { application/json: { schema: { $ref: '#/components/schemas/DuplicateWarning' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---- availability ----
+  /availability/templates:
+    get:
+      tags: [availability]
+      summary: List a doctor's weekly templates
+      parameters: [ { $ref: '#/components/parameters/doctorId' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AvailabilityTemplate' } } } } } }
+    post:
+      tags: [availability]
+      summary: Add a weekly template entry (doctor or center-admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AvailabilityTemplate' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/AvailabilityTemplate' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /availability/templates/{templateId}:
+    delete:
+      tags: [availability]
+      summary: Remove a weekly template entry (doctor or center-admin)
+      parameters: [ { name: templateId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      responses: { '204': { description: Deleted }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { description: Not found } }
+  /availability/exceptions:
+    get:
+      tags: [availability]
+      summary: List a doctor's date-specific exceptions (optionally for one date)
+      parameters: [ { $ref: '#/components/parameters/doctorId' }, { name: date, in: query, required: false, schema: { type: string, format: date } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AvailabilityException' } } } } } }
+    post:
+      tags: [availability]
+      summary: Add a date-specific exception (block / override / extra)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AvailabilityException' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/AvailabilityException' } } } } }
+  /availability/exceptions/{exceptionId}:
+    delete:
+      tags: [availability]
+      summary: Remove a date-specific exception (doctor or center-admin)
+      parameters: [ { name: exceptionId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      responses: { '204': { description: Deleted }, '403': { $ref: '#/components/responses/Forbidden' }, '404': { description: Not found } }
+  /availability/slots:
+    get:
+      tags: [availability]
+      summary: Resolved bookable intervals for a doctor on a date (template + exceptions)
+      parameters: [ { $ref: '#/components/parameters/doctorId' }, { $ref: '#/components/parameters/date' } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/BookableInterval' } } } } } }
+
+  # ---- requests (doctor -> reception) ----
+  /requests:
+    get:
+      tags: [requests]
+      summary: List appointment requests (reception sees the pending queue; doctor sees own)
+      parameters: [ { name: status, in: query, schema: { type: string, enum: [pending, fulfilled, declined] } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AppointmentRequest' } } } } } }
+    post:
+      tags: [requests]
+      summary: Doctor submits an appointment request
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AppointmentRequestCreate' } } } }
+      responses: { '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/AppointmentRequest' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /requests/{requestId}/fulfill:
+    post:
+      tags: [requests]
+      summary: Reception fulfills a request by booking a concrete slot (creates an Appointment)
+      parameters: [ { name: requestId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AppointmentCreate' } } } }
+      responses:
+        '201': { description: Appointment created and request fulfilled, content: { application/json: { schema: { $ref: '#/components/schemas/Appointment' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+  /requests/{requestId}/decline:
+    post:
+      tags: [requests]
+      summary: Reception declines a request with a reason (notifies the doctor)
+      parameters: [ { name: requestId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RequestDecline' } } } }
+      responses: { '200': { description: Declined, content: { application/json: { schema: { $ref: '#/components/schemas/AppointmentRequest' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+
+  # ---- appointments ----
+  /appointments:
+    get:
+      tags: [appointments]
+      summary: List appointments (center day view, or per-doctor schedule)
+      parameters:
+        - { $ref: '#/components/parameters/doctorId' }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Appointment' } } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+    post:
+      tags: [appointments]
+      summary: Reception creates a direct (walk-in) booking
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AppointmentCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Appointment' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }      # double_booking / slot_taken
+        '422': { $ref: '#/components/responses/Unprocessable' }  # outside_availability / off_grid / patient_conflict
+  /appointments/{appointmentId}/reschedule:
+    post:
+      tags: [appointments]
+      summary: Reception reschedules a scheduled appointment (old slot freed atomically)
+      parameters: [ { name: appointmentId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AppointmentReschedule' } } } }
+      responses: { '200': { description: Rescheduled, content: { application/json: { schema: { $ref: '#/components/schemas/Appointment' } } } }, '409': { $ref: '#/components/responses/Conflict' }, '422': { $ref: '#/components/responses/Unprocessable' } }
+  /appointments/{appointmentId}/status:
+    put:
+      tags: [appointments]
+      summary: Reception sets status (completed / cancelled / no_show) per state machine
+      parameters: [ { name: appointmentId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AppointmentStatusUpdate' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Appointment' } } } }, '409': { $ref: '#/components/responses/Conflict' } }
+
+  # ---- notifications ----
+  /notifications:
+    get:
+      tags: [notifications]
+      summary: List the caller's in-app notifications
+      parameters: [ { name: unread, in: query, schema: { type: boolean } } ]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Notification' } } } } } }
+  /notifications/{notificationId}/read:
+    post:
+      tags: [notifications]
+      summary: Mark a notification read
+      parameters: [ { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } } ]
+      responses: { '204': { description: Marked read } }

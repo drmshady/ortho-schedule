@@ -1,0 +1,19 @@
+{$DOMAIN} {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		root * /srv/www
+		try_files {path} /index.html
+		file_server
+	}
+
+	handle_errors {
+		root * /srv/maintenance
+		rewrite * /maintenance.html
+		file_server
+	}
+}

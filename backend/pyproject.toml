@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clinic-scheduling-backend"
+version = "0.1.0"
+description = "FastAPI backend for the clinic patient scheduling MVP."
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.13",
+  "argon2-cffi>=23.1",
+  "fastapi>=0.115",
+  "psycopg[binary]>=3.2",
+  "pydantic>=2.8",
+  "pydantic-settings>=2.4",
+  "python-multipart>=0.0.9",
+  "sqlalchemy[asyncio]>=2.0",
+  "uvicorn[standard]>=0.30"
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27",
+  "mypy>=1.11",
+  "pip-audit>=2.9",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.6",
+  "testcontainers[postgres]>=4.8"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+# Keep B008 active to catch genuine mutable-default-call bugs, but recognize FastAPI's
+# dependency-injection helpers (Depends/Query/Path/...) as immutable so the intended idiom
+# of calling them in argument defaults does not trip the rule.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.Query",
+  "fastapi.Path",
+  "fastapi.Body",
+  "fastapi.Header",
+  "fastapi.Cookie",
+  "fastapi.Form",
+  "fastapi.File",
+]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
+ignore_missing_imports = true

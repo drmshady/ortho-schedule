@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: clinic-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install .
+    startCommand: alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: SUPERADMIN_EMAIL
+        sync: false
+      - key: SUPERADMIN_PASSWORD
+        sync: false
