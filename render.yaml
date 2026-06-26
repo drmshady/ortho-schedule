@@ -14,6 +14,8 @@ services:
         generateValue: true
       - key: COOKIE_SECURE
         value: "true"
+      - key: PYTHON_VERSION
+        value: "3.12.7"
       - key: SUPERADMIN_EMAIL
         sync: false
       - key: SUPERADMIN_PASSWORD
